@@ -33,14 +33,15 @@ const (
 
 // Field represents one column/field in a table/collection
 type Field struct {
-	Name      string
-	NormType  BSONType // normalized cross-DB type
-	DestType  string   // explicit destination PostgreSQL type, e.g. "TIMESTAMPTZ"; overrides NormType mapping
-	Nullable  bool
-	IsPrimary bool
-	IsUnique  bool
-	TableName string // destination table this field belongs to; set by FillTableNames
-	IsFKOf    string // if non-empty, this field is a FK referencing this table name
+	Name          string
+	NormType      BSONType // normalized cross-DB type
+	DestType      string   // explicit destination PostgreSQL type, e.g. "TIMESTAMPTZ"; overrides NormType mapping
+	Nullable      bool
+	IsPrimary     bool
+	IsUnique      bool
+	TableName     string // destination table this field belongs to; set by FillTableNames
+	IsFKOf        string // if non-empty, this field is a FK referencing this table name
+	SeparateTable bool   // if true, this array field spawns its own child table
 	// HasDefault bool
 	// Extra      string // e.g. "auto_increment", "on update CURRENT_TIMESTAMP"
 }
@@ -71,7 +72,7 @@ func (s *Stream) AddField(f Field) {
 func (s *Stream) FillTableNames() {
 	arrayRoots := make(map[string]bool)
 	for _, f := range s.Fields {
-		if f.NormType == BSONTypeArray {
+		if f.SeparateTable {
 			arrayRoots[f.Name] = true
 		}
 	}
@@ -151,9 +152,12 @@ func streamKey(namespace, name string) string {
 
 // FieldSpec pairs a field name with an optional explicit PostgreSQL destination
 // type. Leave PgType empty to have the type inferred from the discovered BSON type.
+// Set SeparateTable to true to have array fields stored in their own child table;
+// otherwise the field is kept as JSONB (or the given PgType) in the parent table.
 type FieldSpec struct {
-	Name   string
-	PgType string // e.g. "TIMESTAMPTZ", "BIGINT", "JSONB"; empty = auto
+	Name          string
+	PgType        string // e.g. "TIMESTAMPTZ", "BIGINT", "JSONB"; empty = auto
+	SeparateTable bool   // if true, array field spawns a child table
 }
 
 // FilterFields returns a new Stream containing only the fields whose names are
@@ -171,6 +175,7 @@ func (s *Stream) FilterFields(specs []FieldSpec) *Stream {
 			continue
 		}
 		f.DestType = spec.PgType
+		f.SeparateTable = spec.SeparateTable
 		out.AddField(f)
 	}
 

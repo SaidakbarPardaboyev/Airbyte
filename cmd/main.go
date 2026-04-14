@@ -51,17 +51,17 @@ var (
 		{Name: "organization.id", PgType: "VARCHAR"},
 		{Name: "organization.name", PgType: "VARCHAR"},
 		{Name: "payment.cash_box_states", PgType: "JSONB"},
-		{Name: "payment.cash_box_states.amount", PgType: "DOUBLE PRECISION"},
-		{Name: "payment.cash_box_states.currency.id", PgType: "BIGINT"},
-		{Name: "payment.cash_box_states.currency.is_national", PgType: "BOOLEAN"},
-		{Name: "payment.cash_box_states.currency.name", PgType: "VARCHAR"},
-		{Name: "payment.cash_box_states.payment_type", PgType: "INTEGER"},
+		// {Name: "payment.cash_box_states.amount", PgType: "DOUBLE PRECISION"},
+		// {Name: "payment.cash_box_states.currency.id", PgType: "BIGINT"},
+		// {Name: "payment.cash_box_states.currency.is_national", PgType: "BOOLEAN"},
+		// {Name: "payment.cash_box_states.currency.name", PgType: "VARCHAR"},
+		// {Name: "payment.cash_box_states.payment_type", PgType: "INTEGER"},
 		{Name: "payment.date", PgType: "TIMESTAMPTZ"},
 		{Name: "payment.debt_states", PgType: "JSONB"},
-		{Name: "payment.debt_states.amount", PgType: "DOUBLE PRECISION"},
-		{Name: "payment.debt_states.currency.id", PgType: "BIGINT"},
-		{Name: "payment.debt_states.currency.is_national", PgType: "BOOLEAN"},
-		{Name: "payment.debt_states.currency.name", PgType: "VARCHAR"},
+		// {Name: "payment.debt_states.amount", PgType: "DOUBLE PRECISION"},
+		// {Name: "payment.debt_states.currency.id", PgType: "BIGINT"},
+		// {Name: "payment.debt_states.currency.is_national", PgType: "BOOLEAN"},
+		// {Name: "payment.debt_states.currency.name", PgType: "VARCHAR"},
 		{Name: "payment.id", PgType: "VARCHAR"},
 		{Name: "payment.notes", PgType: "VARCHAR"},
 		{Name: "percent_discount", PgType: "DOUBLE PRECISION"},
@@ -69,21 +69,20 @@ var (
 		{Name: "status", PgType: "INTEGER"},
 		{Name: "tags", PgType: "JSONB"},
 		{Name: "updated_at", PgType: "TIMESTAMPTZ"},
-		{Name: "used_warehouses", PgType: "INTEGER[]"},
 
-		{Name: "exact_discounts", PgType: "JSONB"},
+		{Name: "exact_discounts", PgType: "JSONB", SeparateTable: true},
 		{Name: "exact_discounts.amount", PgType: "DOUBLE PRECISION"},
 		{Name: "exact_discounts.currency.id", PgType: "BIGINT"},
 		{Name: "exact_discounts.currency.is_national", PgType: "BOOLEAN"},
 		{Name: "exact_discounts.currency.name", PgType: "VARCHAR"},
 
-		{Name: "net_price", PgType: "JSONB"},
+		{Name: "net_price", PgType: "JSONB", SeparateTable: true},
 		{Name: "net_price.amount", PgType: "DOUBLE PRECISION"},
 		{Name: "net_price.currency.id", PgType: "BIGINT"},
 		{Name: "net_price.currency.is_national", PgType: "BOOLEAN"},
 		{Name: "net_price.currency.name", PgType: "VARCHAR"},
 
-		{Name: "items", PgType: "JSONB"},
+		{Name: "items", PgType: "JSONB", SeparateTable: true},
 		{Name: "items.created_at", PgType: "TIMESTAMPTZ"},
 		{Name: "items.deleted_at", PgType: "TIMESTAMPTZ"},
 		{Name: "items.discount.amount", PgType: "DOUBLE PRECISION"},
@@ -119,7 +118,7 @@ var (
 	primaryKey               = "_id"
 )
 
-// payment ni ichidagi data
+// checking data was synced correctly
 // sync prod data and analize and optimize it
 // add apis to sync settings
 
