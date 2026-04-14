@@ -1,5 +1,7 @@
 package catalog
 
+import "strings"
+
 // BSONType is the raw MongoDB BSON type name, matching the names returned by
 // MongoDB's $type aggregation operator.
 type BSONType string
@@ -38,6 +40,7 @@ type Field struct {
 	IsPrimary bool
 	IsUnique  bool
 	TableName string // destination table this field belongs to; set by FillTableNames
+	IsFKOf    string // if non-empty, this field is a FK referencing this table name
 	// HasDefault bool
 	// Extra      string // e.g. "auto_increment", "on update CURRENT_TIMESTAMP"
 }
@@ -99,6 +102,23 @@ func (s *Stream) FillTableNames() {
 			seen[s.Fields[i].TableName] = true
 			s.Tables = append(s.Tables, s.Fields[i].TableName)
 		}
+	}
+
+	// Inject a FK field into every child table referencing the parent.
+	// Strip trailing "s" from parent name: "sales" → "sale_id".
+	parentName := s.Name
+	fkColName := strings.TrimSuffix(parentName, "s") + "_id"
+	for _, tableName := range s.Tables {
+		if tableName == parentName {
+			continue
+		}
+		s.Fields = append(s.Fields, Field{
+			Name:      fkColName,
+			NormType:  BSONTypeString,
+			DestType:  "VARCHAR",
+			TableName: tableName,
+			IsFKOf:    parentName,
+		})
 	}
 }
 

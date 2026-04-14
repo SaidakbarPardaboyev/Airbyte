@@ -81,7 +81,7 @@ func NewWriter(pool *pgxpool.Pool, cfg WriterConfig, logger *slog.Logger) *Write
 // The caller closes ch when reading is done.
 func (w *Writer) Write(ctx context.Context, stream *catalog.Stream, ch <-chan record.Row) (*WriteResult, error) {
 	// resolve the ordered column list once — order matters for COPY
-	cols := resolvedColumns(stream)
+	cols := resolvedColumns(stream, w.cfg.Table)
 
 	switch w.cfg.Mode {
 	case WriteModeOverwrite:
@@ -142,7 +142,7 @@ func (w *Writer) writeOverwrite(ctx context.Context, cols []string, ch <-chan re
 	defer conn.Release()
 
 	// TRUNCATE first — RESTART IDENTITY resets sequences
-	_, err = conn.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s RESTART IDENTITY", w.cfg.qualifiedTable()))
+	_, err = conn.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s RESTART IDENTITY CASCADE", w.cfg.qualifiedTable()))
 	if err != nil {
 		return nil, fmt.Errorf("truncate: %w", err)
 	}
@@ -365,11 +365,13 @@ func drainBatch(ch <-chan record.Row, n int) ([]record.Row, bool) {
 	return batch, false
 }
 
-// resolvedColumns returns a stable, ordered column list from a stream.
-func resolvedColumns(stream *catalog.Stream) []string {
-	cols := make([]string, len(stream.Fields))
-	for i, f := range stream.Fields {
-		cols[i] = f.Name
+// resolvedColumns returns a stable, ordered column list for fields belonging to tableName.
+func resolvedColumns(stream *catalog.Stream, tableName string) []string {
+	var cols []string
+	for _, f := range stream.Fields {
+		if f.TableName == tableName {
+			cols = append(cols, f.Name)
+		}
 	}
 	return cols
 }

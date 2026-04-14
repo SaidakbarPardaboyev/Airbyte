@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"syncer/internal/catalog"
@@ -25,17 +26,14 @@ func ReadCollection(
 	client *mongo.Client,
 	dbName, collName string,
 	stream *catalog.Stream,
-) (<-chan record.Row, error) {
+) (<-chan record.Message, error) {
 	coll := client.Database(dbName).Collection(collName)
-
-	cursor, err := coll.Find(ctx, bson.M{
-		"is_deleted": false,
-	})
+	cursor, err := coll.Find(ctx, bson.M{"is_deleted": false})
 	if err != nil {
 		return nil, fmt.Errorf("mongo find %s.%s: %w", dbName, collName, err)
 	}
 
-	ch := make(chan record.Row, 256)
+	ch := make(chan record.Message, 256)
 
 	go func() {
 		defer close(ch)
@@ -44,22 +42,94 @@ func ReadCollection(
 		for cursor.Next(ctx) {
 			var doc bson.M
 			if err := cursor.Decode(&doc); err != nil {
-				// skip undecodable documents; a real pipeline would log here
 				continue
 			}
-
-			row := make(record.Row, len(stream.Fields))
-			flattenBSONM(doc, "", stream.FieldMap, row)
-
-			select {
-			case ch <- row:
-			case <-ctx.Done():
-				return
-			}
+			emitRows(ctx, doc, stream, ch)
 		}
 	}()
 
 	return ch, nil
+}
+
+// emitRows fans out one MongoDB document into N messages across M tables.
+func emitRows(ctx context.Context, doc bson.M, stream *catalog.Stream, ch chan<- record.Message) {
+	// Build a flat map of all scalar/object values keyed by dot-path
+	flat := make(record.Row, len(stream.Fields))
+	flattenBSONM(doc, "", stream.FieldMap, flat)
+
+	// Get the parent ID (always "_id")
+	parentID := flat["_id"]
+
+	// Group fields by destination table
+	tableFields := make(map[string][]string)
+	for _, f := range stream.Fields {
+		if f.TableName != "" {
+			tableFields[f.TableName] = append(tableFields[f.TableName], f.Name)
+		}
+	}
+
+	// Emit parent table row (e.g. "sales")
+	parentRow := make(record.Row)
+	for _, name := range tableFields[stream.Name] {
+		parentRow[name] = flat[name]
+	}
+	select {
+	case ch <- record.Message{Stream: stream.Name, Row: parentRow, Op: record.OpRead}:
+	case <-ctx.Done():
+		return
+	}
+
+	// Emit child table rows — one message per array element
+	for tableName, fieldNames := range tableFields {
+		if tableName == stream.Name {
+			continue
+		}
+
+		// The raw array lives in the flat map under the table name key (e.g. "items")
+		rawArray, ok := doc[tableName] // e.g. doc["items"]
+		if !ok {
+			continue
+		}
+		arr, ok := rawArray.(bson.A)
+		if !ok {
+			continue
+		}
+
+		// Build a fieldSet for only this child table's sub-fields
+		childFieldSet := make(map[string]catalog.Field)
+		prefix := tableName + "."
+		for _, name := range fieldNames {
+			if strings.HasPrefix(name, prefix) {
+				childFieldSet[name] = stream.FieldMap[name]
+			}
+		}
+
+		for _, elem := range arr {
+			elemDoc, ok := elem.(bson.M)
+			if !ok {
+				continue
+			}
+
+			childRow := make(record.Row)
+			fkColName := strings.TrimSuffix(stream.Name, "s") + "_id"
+			childRow[fkColName] = parentID // FK to parent
+
+			// Flatten the element using the child's fieldSet,
+			// but strip the "items." prefix from keys
+			childFlat := make(record.Row)
+			flattenBSONM(elemDoc, tableName, childFieldSet, childFlat)
+			for k, v := range childFlat {
+				// Store as "items.id" → matches your field names
+				childRow[k] = v
+			}
+
+			select {
+			case ch <- record.Message{Stream: tableName, Row: childRow, Op: record.OpRead}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
 }
 
 // flattenBSONM recursively walks a bson.M and writes leaf values into row
@@ -93,7 +163,6 @@ func flattenBSONM(m bson.M, prefix string, fieldSet map[string]catalog.Field, ro
 		}
 
 	}
-	fmt.Printf("data: %+v\n", row)
 }
 
 func bsonDToM(d bson.D) bson.M {

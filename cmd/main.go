@@ -4,11 +4,13 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"sync"
 	"time"
 
 	"syncer/internal/catalog"
 	"syncer/internal/db"
 	"syncer/internal/destination"
+	"syncer/internal/record"
 	"syncer/internal/source"
 )
 
@@ -159,22 +161,61 @@ func main() {
 	}
 
 	// ── 6. Read from MongoDB, write to Postgres ──────────────────────────────
-	writer := destination.NewWriter(pool, destination.WriterConfig{
-		Schema:     "",
-		Table:      mongoTableNames,
-		Mode:       destination.WriteModeOverwrite,
-		PrimaryKey: []string{primaryKey},
-	}, slog.Default())
-
-	ch, err := source.ReadCollection(ctx, mongoCli, mongoDatabaseName, mongoTableNames, stream)
+	msgCh, err := source.ReadCollection(ctx, mongoCli, mongoDatabaseName, mongoTableNames, stream)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	result, err := writer.Write(ctx, stream, ch)
-	if err != nil {
-		log.Fatal(err)
+	// Build one Writer per destination table
+	writers := make(map[string]*destination.Writer)
+	channels := make(map[string]chan record.Row)
+
+	for _, tableName := range stream.Tables {
+		ch := make(chan record.Row, 256)
+		channels[tableName] = ch
+		writers[tableName] = destination.NewWriter(pool, destination.WriterConfig{
+			Table:      tableName,
+			Mode:       destination.WriteModeOverwrite,
+			PrimaryKey: []string{primaryKey},
+		}, slog.Default())
 	}
 
-	log.Printf("done: %d rows in %d batches (%s)", result.RowsCopied, result.Batches, result.Duration)
+	// Dispatch goroutine — routes messages to per-table channels
+	go func() {
+		for msg := range msgCh {
+			if ch, ok := channels[msg.Stream]; ok {
+				ch <- msg.Row
+			}
+		}
+		// Close all channels when source is done
+		for _, ch := range channels {
+			close(ch)
+		}
+	}()
+
+	// Run all writers concurrently
+	var wg sync.WaitGroup
+	results := make(map[string]*destination.WriteResult)
+	var mu sync.Mutex
+
+	for tableName, w := range writers {
+		wg.Add(1)
+		go func(name string, w *destination.Writer, ch <-chan record.Row) {
+			defer wg.Done()
+			res, err := w.Write(ctx, stream, ch) // pass filtered stream per table
+			if err != nil {
+				log.Printf("write %s failed: %v", name, err)
+				return
+			}
+			mu.Lock()
+			results[name] = res
+			mu.Unlock()
+		}(tableName, w, channels[tableName])
+	}
+
+	wg.Wait()
+
+	for name, res := range results {
+		log.Printf("done [%s]: %d rows in %d batches (%s)", name, res.RowsCopied, res.Batches, res.Duration)
+	}
 }
