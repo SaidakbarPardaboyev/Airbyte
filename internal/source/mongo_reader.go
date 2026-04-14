@@ -28,15 +28,11 @@ func ReadCollection(
 ) (<-chan record.Row, error) {
 	coll := client.Database(dbName).Collection(collName)
 
-	cursor, err := coll.Find(ctx, bson.M{})
+	cursor, err := coll.Find(ctx, bson.M{
+		"is_deleted": false,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("mongo find %s.%s: %w", dbName, collName, err)
-	}
-
-	// build a set of expected field names for O(1) lookup while flattening
-	fieldSet := make(map[string]bool, len(stream.Fields))
-	for _, f := range stream.Fields {
-		fieldSet[f.Name] = true
 	}
 
 	ch := make(chan record.Row, 256)
@@ -53,7 +49,7 @@ func ReadCollection(
 			}
 
 			row := make(record.Row, len(stream.Fields))
-			flattenBSONM(doc, "", fieldSet, row)
+			flattenBSONM(doc, "", stream.FieldMap, row)
 
 			select {
 			case ch <- row:
@@ -68,7 +64,7 @@ func ReadCollection(
 
 // flattenBSONM recursively walks a bson.M and writes leaf values into row
 // using dot-notation keys.  Only keys present in fieldSet are written.
-func flattenBSONM(m bson.M, prefix string, fieldSet map[string]bool, row record.Row) {
+func flattenBSONM(m bson.M, prefix string, fieldSet map[string]catalog.Field, row record.Row) {
 	for k, v := range m {
 		key := k
 		if prefix != "" {
@@ -86,12 +82,12 @@ func flattenBSONM(m bson.M, prefix string, fieldSet map[string]bool, row record.
 
 		case bson.A:
 			// array — keep as []any; writer serialises to JSONB
-			if fieldSet[key] {
+			if _, ok := fieldSet[key]; ok {
 				row[key] = []any(val)
 			}
 
 		default:
-			if fieldSet[key] {
+			if _, ok := fieldSet[key]; ok {
 				row[key] = normalizeBSONValue(v)
 			}
 		}

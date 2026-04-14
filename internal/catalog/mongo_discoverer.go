@@ -67,7 +67,7 @@ func (d *MongoDiscoverer) describeCollection(ctx context.Context, db *mongo.Data
 		if !ok {
 			continue
 		}
-		stream.Fields = append(stream.Fields, Field{
+		stream.AddField(Field{
 			Name:      k,
 			NormType:  raw,
 			IsPrimary: k == "_id",
