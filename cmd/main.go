@@ -18,15 +18,23 @@ import (
 	"syncer/internal/record"
 	"syncer/internal/scheduler"
 	"syncer/internal/source"
+
+	"github.com/joho/godotenv"
 )
 
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 var (
-	mongoConnectionString = "mongodb://dba:0sjnrqoLlK7OzE81x3K0doeJY3ii1b7u@localhost:27016/?directConnection=true&authSource=admin"
-	// mongoConnectionProdString = "mongodb://dba:M0sYCUNsbqOiDXeCPF56kIeF9dtkYBEK@localhost:27018/?directConnection=true&authSource=admin"
-	mongoDatabaseName = "warehouseOperationService"
-	mongoTableNames   = "sales"
-	syncInterval      = 1 * time.Minute
-	mongoTableFields  = []catalog.FieldSpec{
+	mongoConnectionString = ""
+	mongoDatabaseName     = ""
+	mongoTableNames       = ""
+	syncInterval          = time.Duration(0)
+	mongoTableFields      = []catalog.FieldSpec{
 		{Name: "_id", PgType: "VARCHAR"},
 		{Name: "account.id", PgType: "VARCHAR"},
 		{Name: "account.name", PgType: "VARCHAR"},
@@ -122,14 +130,49 @@ var (
 		{Name: "items.warehouse_item.warehouse_item_use.id", PgType: "BIGINT"},
 	}
 
-	postgresConnectionString = "postgresql://postgres:postgres@localhost:5432/report_service"
-	primaryKey               = "_id"
+	postgresConnectionString = ""
+	primaryKey               = ""
 )
 
 // checking data was synced correctly ✅
 // sync prod data and analize and optimize it ✅
 // add schedule system ✅
 // add apis to sync settings
+
+func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Println("no .env file found, reading from environment")
+	}
+
+	mongoConnectionString = getEnv("MONGO_CONNECTION_STRING", "")
+	mongoDatabaseName = getEnv("MONGO_DATABASE_NAME", "")
+	mongoTableNames = getEnv("MONGO_TABLE_NAMES", "")
+	postgresConnectionString = getEnv("POSTGRES_CONNECTION_STRING", "")
+	primaryKey = getEnv("PRIMARY_KEY", "_id")
+
+	if d, err := time.ParseDuration(getEnv("SYNC_INTERVAL", "1m")); err == nil {
+		syncInterval = d
+	} else {
+		log.Fatalf("invalid SYNC_INTERVAL: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Graceful shutdown on SIGINT / SIGTERM
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		<-c
+		log.Println("shutdown signal received, stopping…")
+		cancel()
+	}()
+
+	sched := scheduler.New(syncInterval, runSync, slog.Default())
+	if err := sched.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
+}
 
 func runSync(ctx context.Context) error {
 	// ── 1. Connect to MongoDB ────────────────────────────────────────────────
@@ -229,23 +272,4 @@ func runSync(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Graceful shutdown on SIGINT / SIGTERM
-	go func() {
-		c := make(chan os.Signal, 1)
-		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-		<-c
-		log.Println("shutdown signal received, stopping…")
-		cancel()
-	}()
-
-	sched := scheduler.New(syncInterval, runSync, slog.Default())
-	if err := sched.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatal(err)
-	}
 }
