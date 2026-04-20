@@ -1,6 +1,7 @@
 package sync_mongo
 
 import (
+	"airbyte-service/core"
 	sourcecommon "airbyte-service/sync/sources/common"
 	"context"
 	"fmt"
@@ -19,14 +20,22 @@ import (
 // Nested objects are expanded using dot-notation keys ("account.id").
 // Array fields are kept as []any so normalizeValue in the writer serialises
 // them to JSONB.  Only fields present in table.Fields are emitted.
+//
+// The MongoDB filter depends on writeMode:
+//   - overwrite: no filter — all documents are read
+//   - append:    only documents where table.CreatedTimeField exists
+//   - upsert:    all documents including soft-deleted, via table.CreatedTimeField/UpdatedTimeField/DeletedTimeField
 func ReadCollection(
 	ctx context.Context,
 	client *mongo.Client,
 	dbName, collName string,
 	table *sourcecommon.Table,
+	writeMode core.WriteMode,
+	startTime time.Time,
+	endTime time.Time,
 ) (<-chan Message, error) {
 	coll := client.Database(dbName).Collection(collName)
-	cursor, err := coll.Find(ctx, bson.M{"is_deleted": false})
+	cursor, err := coll.Find(ctx, buildFilter(table, writeMode, startTime, endTime))
 	if err != nil {
 		return nil, fmt.Errorf("mongo find %s.%s: %w", dbName, collName, err)
 	}
@@ -47,6 +56,40 @@ func ReadCollection(
 	}()
 
 	return ch, nil
+}
+
+func buildFilter(table *sourcecommon.Table, writeMode core.WriteMode, startTime, endTime time.Time) bson.M {
+	switch writeMode {
+	case core.WriteModeAppend:
+		if table.CreatedTimeField == "" {
+			return bson.M{}
+		}
+		f := bson.M{"$lte": endTime}
+		if !startTime.IsZero() {
+			f["$gte"] = startTime.Add(time.Minute)
+		}
+		return bson.M{table.CreatedTimeField: f}
+
+	case core.WriteModeUpsert:
+		timeRange := bson.M{"$lte": endTime}
+		if !startTime.IsZero() {
+			timeRange["$gte"] = startTime.Add(time.Minute)
+		}
+		or := bson.A{}
+		if table.CreatedTimeField != "" {
+			or = append(or, bson.M{table.CreatedTimeField: timeRange})
+		}
+		if table.UpdatedTimeField != "" {
+			or = append(or, bson.M{table.UpdatedTimeField: timeRange})
+		}
+		if table.DeletedTimeField != "" {
+			or = append(or, bson.M{table.DeletedTimeField: timeRange})
+		}
+		if len(or) > 0 {
+			return bson.M{"$or": or}
+		}
+	}
+	return bson.M{}
 }
 
 // emitRows fans out one MongoDB document into N messages across M tables.

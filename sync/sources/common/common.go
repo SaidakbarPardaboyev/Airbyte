@@ -23,13 +23,16 @@ type Field struct {
 
 // Table is one table or collection with its discovered fields
 type Table struct {
-	Name       string
-	Namespace  string // schema name (MySQL db, Postgres schema, Mongo collection db)
-	WriteMode  core.WriteMode
-	PrimaryKey string
-	Fields     []Field
-	FieldMap   map[string]Field // fast lookup by name
-	Tables     []string         // distinct destination table names; populated by FillTableNames
+	Name             string
+	Namespace        string // schema name (MySQL db, Postgres schema, Mongo collection db)
+	WriteMode        core.WriteMode
+	PrimaryKey       string
+	Fields           []Field
+	FieldMap         map[string]Field // fast lookup by name
+	Tables           []string         // distinct destination table names; populated by FillTableNames
+	CreatedTimeField string           // field name tracking document creation time; used in append mode
+	UpdatedTimeField string           // field name tracking last update time; used in upsert mode
+	DeletedTimeField string           // field name for soft-deletion flag/timestamp; used in upsert mode
 }
 
 // AddField appends f to Fields and registers it in FieldMap.

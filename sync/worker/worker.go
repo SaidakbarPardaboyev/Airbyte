@@ -120,7 +120,7 @@ func (s *Scheduler) syncTable(ctx context.Context, mongoCli mongodatabase.Databa
 		return fmt.Errorf("ensure tables: %w", err)
 	}
 
-	msgCh, err := sourcemongo.ReadCollection(ctx, mongoCli.GetClient(), database, tbl.Name, table)
+	msgCh, err := sourcemongo.ReadCollection(ctx, mongoCli.GetClient(), database, tbl.Name, table, tbl.WriteMode, s.lastSyncEndTimeFilter, s.currentSyncEndingTimeFilter)
 	if err != nil {
 		return fmt.Errorf("read table: %w", err)
 	}

@@ -30,32 +30,37 @@ type Scheduler struct {
 	// tableService    airbytetableservice.Service
 	// fieldService    airbytefieldservice.Service
 
-	interval time.Duration
-	pool     *pgxpool.Pool
-	sources  []Source
-	logger   *slog.Logger
-	mu       sync.Mutex
-	history  []*Job
-	nextID   int
-	running  bool
+	interval                    time.Duration
+	pool                        *pgxpool.Pool
+	sources                     []Source
+	logger                      *slog.Logger
+	mu                          sync.Mutex
+	history                     []*Job
+	nextID                      int
+	running                     bool
+	lastSyncEndTimeFilter       time.Time // time of last successful sync end; loaded from env on startup
+	currentSyncEndingTimeFilter time.Time // set to time.Now()-1min when a trigger starts; becomes lastSyncEndTimeFilter on success
 }
 
 // New creates a Scheduler. When cfg.Interval is 0, Run executes the jobs once and returns.
+// lastSyncEndTimeFilter is loaded from the LAST_SYNC_END_TIME env var (RFC3339); zero value means no lower bound.
 func New(
 	interval time.Duration,
 	pool *pgxpool.Pool,
+	lastSyncEndTimeFilter time.Time,
 	// databaseService airbytedbservice.Service,
 	// tableService airbytetableservice.Service,
 	// fieldService airbytefieldservice.Service,
 	logger *slog.Logger,
 ) *Scheduler {
 	return &Scheduler{
-		interval:        interval,
-		pool:            pool,
+		interval:              interval,
+		pool:                  pool,
+		lastSyncEndTimeFilter: lastSyncEndTimeFilter,
 		// databaseService: databaseService,
 		// tableService:    tableService,
 		// fieldService:    fieldService,
-		logger:          logger,
+		logger: logger,
 	}
 }
 
@@ -90,6 +95,7 @@ func (s *Scheduler) trigger(ctx context.Context) {
 		return
 	}
 	s.running = true
+	s.currentSyncEndingTimeFilter = time.Now().Add(-time.Minute)
 	s.nextID++
 	job := &Job{ID: s.nextID, StartedAt: time.Now(), Status: core.StatusRunning}
 	s.history = append(s.history, job)
@@ -108,6 +114,7 @@ func (s *Scheduler) trigger(ctx context.Context) {
 		s.logger.Error("sync failed", "job_id", job.ID, "duration", job.Duration, "error", err)
 	} else {
 		job.Status = core.StatusSucceeded
+		s.lastSyncEndTimeFilter = s.currentSyncEndingTimeFilter
 		s.logger.Info("sync succeeded", "job_id", job.ID, "duration", job.Duration)
 	}
 	s.running = false
