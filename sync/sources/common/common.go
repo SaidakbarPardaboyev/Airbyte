@@ -35,6 +35,15 @@ type Table struct {
 	DeletedTimeField string           // field name for soft-deletion flag/timestamp; used in upsert mode
 }
 
+// MongoToPostgresFieldName maps MongoDB field names to their PostgreSQL column
+// names. MongoDB's primary key "_id" becomes "id".
+func MongoToPostgresFieldName(name string) string {
+	if name == "_id" {
+		return "id"
+	}
+	return name
+}
+
 // AddField appends f to Fields and registers it in FieldMap.
 func (s *Table) AddField(f Field) {
 	if s.FieldMap == nil {
@@ -106,19 +115,28 @@ func (s *Table) FillTableNames() {
 // FilterFields returns a new Table containing only the fields whose names are
 // in specs, preserving their order. Fields not found in the receiver get a TEXT
 // fallback. DestType is set on each field when PgType is non-empty.
-func (s *Table) FilterFields(specs []FieldSpec) *Table {
+func (s *Table) FilterFields(table *Table) *Table {
 	out := &Table{
-		Name:      s.Name,
-		Namespace: s.Namespace,
+		Name:             table.Name,
+		Namespace:        table.Namespace,
+		WriteMode:        table.WriteMode,
+		PrimaryKey:       table.PrimaryKey,
+		Fields:           []Field{},
+		FieldMap:         map[string]Field{},
+		Tables:           []string{},
+		CreatedTimeField: table.CreatedTimeField,
+		UpdatedTimeField: table.UpdatedTimeField,
+		DeletedTimeField: table.DeletedTimeField,
 	}
 
-	for _, spec := range specs {
-		f, ok := s.FieldMap[spec.Name]
+	for _, field := range table.Fields {
+		f, ok := s.FieldMap[field.Name]
 		if !ok {
 			continue
 		}
-		f.DestType = spec.PgType
-		f.SeparateTable = spec.SeparateTable
+		f.DestType = field.DestType
+		f.SeparateTable = field.SeparateTable
+		f.IsPrimary = field.IsPrimary
 		out.AddField(f)
 	}
 
@@ -127,6 +145,8 @@ func (s *Table) FilterFields(specs []FieldSpec) *Table {
 
 // DatabaseScheme is the full discovered schema from a source
 type DatabaseScheme struct {
+	MongoURI string
+	Database string
 	Tables   []*Table
 	TableMap map[string]*Table // keyed by "namespace.name"
 }
@@ -176,14 +196,4 @@ func (d *DatabaseScheme) PrintDatabaseScheme(w io.Writer) {
 		}
 	}
 	tw.Flush()
-}
-
-// FieldSpec pairs a field name with an optional explicit PostgreSQL destination
-// type. Leave PgType empty to have the type inferred from the discovered BSON type.
-// Set SeparateTable to true to have array fields stored in their own child table;
-// otherwise the field is kept as JSONB (or the given PgType) in the parent table.
-type FieldSpec struct {
-	Name          string
-	PgType        string // e.g. "TIMESTAMPTZ", "BIGINT", "JSONB"; empty = auto
-	SeparateTable bool   // if true, array field spawns a child table
 }

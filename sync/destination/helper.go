@@ -3,13 +3,16 @@ package sync_destination
 import (
 	sourcecommon "airbyte-service/sync/sources/common"
 	"encoding/json"
+	"strings"
 )
 
 func resolvedColumns(table *sourcecommon.Table, tableName string) []string {
 	var cols []string
+	prefix := tableName + "."
 	for _, f := range table.Fields {
 		if f.TableName == tableName {
-			cols = append(cols, f.Name)
+			name := strings.TrimPrefix(f.Name, prefix)
+			cols = append(cols, name)
 		}
 	}
 	return cols

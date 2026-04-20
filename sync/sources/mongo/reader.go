@@ -59,6 +59,7 @@ func ReadCollection(
 }
 
 func buildFilter(table *sourcecommon.Table, writeMode core.WriteMode, startTime, endTime time.Time) bson.M {
+	fmt.Println(writeMode)
 	switch writeMode {
 	case core.WriteModeAppend:
 		if table.CreatedTimeField == "" {
@@ -99,7 +100,7 @@ func emitRows(ctx context.Context, doc bson.M, table *sourcecommon.Table, ch cha
 	flattenBSONM(doc, "", table.FieldMap, flat)
 
 	// Get the parent ID (always "_id")
-	parentID := flat["_id"]
+	parentID := flat["id"]
 
 	// Group fields by destination table
 	tableFields := make(map[string][]string)
@@ -112,7 +113,8 @@ func emitRows(ctx context.Context, doc bson.M, table *sourcecommon.Table, ch cha
 	// Emit parent table row (e.g. "sales")
 	parentRow := make(Row)
 	for _, name := range tableFields[table.Name] {
-		parentRow[name] = flat[name]
+		postgresFieldName := sourcecommon.MongoToPostgresFieldName(name)
+		parentRow[postgresFieldName] = flat[postgresFieldName]
 	}
 	select {
 	case ch <- Message{Table: table.Name, Row: parentRow}:
@@ -140,8 +142,9 @@ func emitRows(ctx context.Context, doc bson.M, table *sourcecommon.Table, ch cha
 		childFieldSet := make(map[string]sourcecommon.Field)
 		prefix := tableName + "."
 		for _, name := range fieldNames {
-			if strings.HasPrefix(name, prefix) {
-				childFieldSet[name] = table.FieldMap[name]
+			postgresFieldName := sourcecommon.MongoToPostgresFieldName(name)
+			if strings.HasPrefix(postgresFieldName, prefix) {
+				childFieldSet[postgresFieldName] = table.FieldMap[postgresFieldName]
 			}
 		}
 
@@ -160,7 +163,8 @@ func emitRows(ctx context.Context, doc bson.M, table *sourcecommon.Table, ch cha
 			childFlat := make(Row)
 			flattenBSONM(elemDoc, tableName, childFieldSet, childFlat)
 			for k, v := range childFlat {
-				childRow[k] = v
+				stripped := strings.TrimPrefix(k, prefix)
+				childRow[stripped] = v
 			}
 
 			select {
@@ -180,6 +184,7 @@ func flattenBSONM(m bson.M, prefix string, fieldSet map[string]sourcecommon.Fiel
 		if prefix != "" {
 			key = prefix + "." + k
 		}
+		key = sourcecommon.MongoToPostgresFieldName(key)
 
 		switch val := v.(type) {
 		case bson.M:

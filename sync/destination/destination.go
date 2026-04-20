@@ -65,7 +65,7 @@ func (w *Writer) writeAppend(ctx context.Context, cols []string, ch <-chan sourc
 			break
 		}
 
-		n, err := w.copyBatch(ctx, postgres.QualifiedTable(w.tableName), cols, batch)
+		n, err := w.copyBatch(ctx, pgx.Identifier{w.tableName}, cols, batch)
 		result.RowsCopied += n
 		result.Batches++
 
@@ -119,19 +119,9 @@ func (w *Writer) writeUpsert(ctx context.Context, cols []string, ch <-chan sourc
 	}
 	defer conn.Release()
 
-	tmp := postgres.QualifiedTable(postgres.TempTable(w.tableName))
+	tmpName := postgres.TempTable(w.tableName)
+	tmp := postgres.QualifiedTable(tmpName)
 	target := postgres.QualifiedTable(w.tableName)
-
-	createTmp := fmt.Sprintf(`
-		CREATE TEMP TABLE %s
-		(LIKE %s INCLUDING DEFAULTS)
-		ON COMMIT DROP
-	`, tmp, target)
-
-	_, err = conn.Exec(ctx, createTmp)
-	if err != nil {
-		return nil, fmt.Errorf("create temp table: %w", err)
-	}
 
 	tx, err := conn.Begin(ctx)
 	if err != nil {
@@ -139,13 +129,24 @@ func (w *Writer) writeUpsert(ctx context.Context, cols []string, ch <-chan sourc
 	}
 	defer tx.Rollback(ctx)
 
+	createTmp := fmt.Sprintf(`
+		CREATE TEMP TABLE %s
+		(LIKE %s INCLUDING DEFAULTS)
+		ON COMMIT DROP
+	`, tmp, target)
+
+	_, err = tx.Exec(ctx, createTmp)
+	if err != nil {
+		return nil, fmt.Errorf("create temp table: %w", err)
+	}
+
 	for {
 		batch, done := drainBatch(ch, core.BatchSize)
 		if len(batch) == 0 {
 			break
 		}
 
-		n, err := w.copyBatchTx(ctx, tx, tmp, cols, batch)
+		n, err := w.copyBatchTx(ctx, tx, pgx.Identifier{tmpName}, cols, batch)
 		result.RowsCopied += n
 		result.Batches++
 
@@ -209,14 +210,14 @@ func (w *Writer) buildMergeSQL(tmpTable, targetTable string, cols []string) stri
 	)
 }
 
-func (w *Writer) copyBatch(ctx context.Context, table string, cols []string, batch []sourcemongo.Row) (int64, error) {
+func (w *Writer) copyBatch(ctx context.Context, tableIdent pgx.Identifier, cols []string, batch []sourcemongo.Row) (int64, error) {
 	conn, err := w.pool.Acquire(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("acquire conn: %w", err)
 	}
 	defer conn.Release()
 
-	return w.copyBatchTx(ctx, conn.Conn(), table, cols, batch)
+	return w.copyBatchTx(ctx, conn.Conn(), tableIdent, cols, batch)
 }
 
 func (w *Writer) copyBatchTx(
@@ -224,7 +225,7 @@ func (w *Writer) copyBatchTx(
 	conn interface {
 		CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
 	},
-	table string,
+	tableIdent pgx.Identifier,
 	cols []string,
 	batch []sourcemongo.Row,
 ) (int64, error) {
@@ -237,9 +238,9 @@ func (w *Writer) copyBatchTx(
 		rows[i] = vals
 	}
 
-	n, err := conn.CopyFrom(ctx, pgx.Identifier{w.tableName}, cols, pgx.CopyFromRows(rows))
+	n, err := conn.CopyFrom(ctx, tableIdent, cols, pgx.CopyFromRows(rows))
 	if err != nil {
-		return n, fmt.Errorf("COPY %s: %w", table, err)
+		return n, fmt.Errorf("COPY %s: %w", tableIdent.Sanitize(), err)
 	}
 	return n, nil
 }

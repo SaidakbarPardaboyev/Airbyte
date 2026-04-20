@@ -100,10 +100,11 @@ func EnsureTable(ctx context.Context, pool *pgxpool.Pool, table *sourcecommon.Ta
 			if !f.Nullable && f.IsPrimary {
 				nullable = " NOT NULL"
 			}
-			col := fmt.Sprintf("  %s %s%s", pgx.Identifier{f.Name}.Sanitize(), pgType, nullable)
+			colName := strings.TrimPrefix(f.Name, f.TableName+".")
+			col := fmt.Sprintf("  %s %s%s", pgx.Identifier{colName}.Sanitize(), pgType, nullable)
 			cols = append(cols, col)
 			if f.IsPrimary {
-				pks = append(pks, pgx.Identifier{f.Name}.Sanitize())
+				pks = append(pks, pgx.Identifier{colName}.Sanitize())
 			}
 		}
 

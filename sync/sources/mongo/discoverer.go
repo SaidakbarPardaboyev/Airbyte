@@ -70,7 +70,7 @@ func (d *MongoDiscoverer) describeCollection(ctx context.Context, db *mongo.Data
 			continue
 		}
 		table.AddField(sourcecommon.Field{
-			Name:      k,
+			Name:      sourcecommon.MongoToPostgresFieldName(k),
 			NormType:  raw,
 			IsPrimary: k == "_id",
 		})

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"airbyte-service/core"
+	// "airbyte-service/core"
 	mongodatabase "airbyte-service/database/mongo"
 	"airbyte-service/database/postgres"
 	syncdestination "airbyte-service/sync/destination"
@@ -14,18 +14,18 @@ import (
 	sourcemongo "airbyte-service/sync/sources/mongo"
 )
 
-type Table struct {
-	Name       string
-	WriteMode  core.WriteMode
-	PrimaryKey string
-	Fields     []sourcecommon.FieldSpec
-}
+// type Table struct {
+// 	Name       string
+// 	WriteMode  core.WriteMode
+// 	PrimaryKey string
+// 	Fields     []sourcecommon.FieldSpec
+// }
 
-type Source struct {
-	MongoURI string
-	Database string
-	Tables   []Table
-}
+// type Source struct {
+// 	MongoURI string
+// 	Database string
+// 	Tables   []Table
+// }
 
 // func (s *Scheduler) LoadDatabasesWithTables() {
 // 	dbList, err := s.databaseService.GetList()
@@ -42,11 +42,11 @@ type Source struct {
 // 		}
 
 // 		var tables []Table
-// 		for _, tbl := range tableList.Tables {
-// 			tblID := tbl.ID
-// 			fieldList, err := s.fieldService.GetList(&tblID)
+// 		for _, table := range tableList.Tables {
+// 			tableID := table.ID
+// 			fieldList, err := s.fieldService.GetList(&tableID)
 // 			if err != nil {
-// 				log.Fatalf("load fields for table %s: %v", tbl.Name, err)
+// 				log.Fatalf("load fields for table %s: %v", table.Name, err)
 // 			}
 
 // 			specs := make([]sourcecommon.FieldSpec, len(fieldList.Fields))
@@ -59,9 +59,9 @@ type Source struct {
 // 			}
 
 // 			tables = append(tables, Table{
-// 				Name:       tbl.Name,
-// 				WriteMode:  core.WriteMode(tbl.WriteMode),
-// 				PrimaryKey: tbl.PrimaryKey,
+// 				Name:       table.Name,
+// 				WriteMode:  core.WriteMode(table.WriteMode),
+// 				PrimaryKey: table.PrimaryKey,
 // 				Fields:     specs,
 // 			})
 // 		}
@@ -75,7 +75,7 @@ type Source struct {
 // 	s.sources = sources
 // }
 
-func (s *Scheduler) PutDatabasesWithTables(sources []Source) {
+func (s *Scheduler) PutDatabasesWithTables(sources []sourcecommon.DatabaseScheme) {
 	s.sources = sources
 }
 
@@ -88,7 +88,7 @@ func (s *Scheduler) runSync(ctx context.Context) error {
 	return nil
 }
 
-func (s *Scheduler) syncSource(ctx context.Context, src Source) error {
+func (s *Scheduler) syncSource(ctx context.Context, src sourcecommon.DatabaseScheme) error {
 	mongoCli, err := mongodatabase.NewDatabase(mongodatabase.MongoConfig{ConnectionString: src.MongoURI})
 	if err != nil {
 		return fmt.Errorf("connect mongo: %w", err)
@@ -100,27 +100,27 @@ func (s *Scheduler) syncSource(ctx context.Context, src Source) error {
 		return fmt.Errorf("discover schema: %w", err)
 	}
 
-	for _, tbl := range src.Tables {
-		if err := s.syncTable(ctx, mongoCli, mongoCat, src.Database, tbl); err != nil {
-			return fmt.Errorf("table %s: %w", tbl.Name, err)
+	for _, table := range src.Tables {
+		if err := s.syncTable(ctx, mongoCli, mongoCat, src.Database, table); err != nil {
+			return fmt.Errorf("table %s: %w", table.Name, err)
 		}
 	}
 	return nil
 }
 
-func (s *Scheduler) syncTable(ctx context.Context, mongoCli mongodatabase.Database, mongoCat *sourcecommon.DatabaseScheme, database string, tbl Table) error {
-	discovered, ok := mongoCat.Get(database, tbl.Name)
+func (s *Scheduler) syncTable(ctx context.Context, mongoCli mongodatabase.Database, mongoCat *sourcecommon.DatabaseScheme, database string, table *sourcecommon.Table) error {
+	discovered, ok := mongoCat.Get(database, table.Name)
 	if !ok {
-		return fmt.Errorf("table %q not found in database scheme", tbl.Name)
+		return fmt.Errorf("table %q not found in database scheme", table.Name)
 	}
-	table := discovered.FilterFields(tbl.Fields)
+	table = discovered.FilterFields(table)
 	table.FillTableNames()
 
 	if err := postgres.EnsureTable(ctx, s.pool, table); err != nil {
 		return fmt.Errorf("ensure tables: %w", err)
 	}
 
-	msgCh, err := sourcemongo.ReadCollection(ctx, mongoCli.GetClient(), database, tbl.Name, table, tbl.WriteMode, s.lastSyncEndTimeFilter, s.currentSyncEndingTimeFilter)
+	msgCh, err := sourcemongo.ReadCollection(ctx, mongoCli.GetClient(), database, table.Name, table, table.WriteMode, s.lastSyncEndTimeFilter, s.currentSyncEndingTimeFilter)
 	if err != nil {
 		return fmt.Errorf("read table: %w", err)
 	}
@@ -131,7 +131,7 @@ func (s *Scheduler) syncTable(ctx context.Context, mongoCli mongodatabase.Databa
 	for _, tableName := range table.Tables {
 		ch := make(chan sourcemongo.Row, 256)
 		channels[tableName] = ch
-		writers[tableName] = syncdestination.NewWriter(s.pool, tableName, tbl.WriteMode, []string{tbl.PrimaryKey}, slog.Default())
+		writers[tableName] = syncdestination.NewWriter(s.pool, tableName, table.WriteMode, []string{table.PrimaryKey}, slog.Default())
 	}
 
 	go func() {
@@ -155,7 +155,7 @@ func (s *Scheduler) syncTable(ctx context.Context, mongoCli mongodatabase.Databa
 			defer wg.Done()
 			res, err := w.Write(ctx, table, ch)
 			if err != nil {
-				s.logger.Error("write failed", "db", database, "table", tbl.Name, "dest_table", name, "err", err)
+				s.logger.Error("write failed", "db", database, "table", table.Name, "dest_table", name, "err", err)
 				return
 			}
 			mu.Lock()
@@ -169,7 +169,7 @@ func (s *Scheduler) syncTable(ctx context.Context, mongoCli mongodatabase.Databa
 	for name, res := range results {
 		s.logger.Info("sync done",
 			"db", database,
-			"table", tbl.Name,
+			"table", table.Name,
 			"dest_table", name,
 			"rows", res.RowsCopied,
 			"batches", res.Batches,

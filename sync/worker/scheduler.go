@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"airbyte-service/core"
+	sourcecommon "airbyte-service/sync/sources/common"
 	// airbytedbservice "airbyte-service/service/airbyte-database"
 	// airbytefieldservice "airbyte-service/service/airbyte-field"
 	// airbytetableservice "airbyte-service/service/airbyte-table"
@@ -32,7 +33,7 @@ type Scheduler struct {
 
 	interval                    time.Duration
 	pool                        *pgxpool.Pool
-	sources                     []Source
+	sources                     []sourcecommon.DatabaseScheme
 	logger                      *slog.Logger
 	mu                          sync.Mutex
 	history                     []*Job
