@@ -42,9 +42,6 @@ func NewWriter(pool *pgxpool.Pool, tableName sourcecommon.TableName, writeMode c
 func (w *Writer) Write(ctx context.Context, table *sourcecommon.Table, ch <-chan sourcemongo.Row) (*WriteResult, error) {
 	cols := resolvedColumns(table, w.tableName.SourceTableName)
 
-	fmt.Println("cols:", cols)
-	fmt.Println("ch:", <-ch)
-
 	switch w.writeMode {
 	case core.WriteModeOverwrite:
 		return w.writeOverwrite(ctx, cols, ch)
