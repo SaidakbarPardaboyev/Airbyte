@@ -89,7 +89,7 @@ func EnsureTable(ctx context.Context, pool *pgxpool.Pool, table *sourcecommon.Ta
 		var pks []string
 
 		for _, f := range table.Fields {
-			if f.TableName != tableName {
+			if f.TableName != tableName.SourceTableName {
 				continue
 			}
 			postgresType := fieldPostgresType(f)
@@ -97,7 +97,7 @@ func EnsureTable(ctx context.Context, pool *pgxpool.Pool, table *sourcecommon.Ta
 			if !f.Nullable && f.IsPrimary {
 				nullable = " NOT NULL"
 			}
-			columnName := strings.TrimPrefix(f.Name, tableName+".")
+			columnName := strings.TrimPrefix(f.Name, tableName.SourceTableName+".")
 			column := fmt.Sprintf("  %s %s%s", pgx.Identifier{columnName}.Sanitize(), postgresType, nullable)
 			columns = append(columns, column)
 			if f.IsPrimary {
@@ -110,7 +110,7 @@ func EnsureTable(ctx context.Context, pool *pgxpool.Pool, table *sourcecommon.Ta
 		}
 
 		ddl := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n%s\n)",
-			pgx.Identifier{tableName}.Sanitize(), strings.Join(columns, ",\n"))
+			pgx.Identifier{tableName.DestinationTableName}.Sanitize(), strings.Join(columns, ",\n"))
 
 		if _, err := pool.Exec(ctx, ddl); err != nil {
 			return fmt.Errorf("ensure table %s: %w", tableName, err)

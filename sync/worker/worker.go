@@ -84,8 +84,8 @@ func (s *Scheduler) syncTable(ctx context.Context, mongoCli mongodatabase.Databa
 		for _, tableName := range discoveredTable.Tables {
 			ch := make(chan sourcemongo.Row, 256)
 
-			channels[tableName] = ch
-			writers[tableName] = syncdestination.NewWriter(s.destination, tableName, discoveredTable.WriteMode, slog.Default())
+			channels[tableName.SourceTableName] = ch
+			writers[tableName.SourceTableName] = syncdestination.NewWriter(s.destination, tableName, discoveredTable.WriteMode, slog.Default())
 		}
 	}
 

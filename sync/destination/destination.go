@@ -24,14 +24,13 @@ type WriteResult struct {
 }
 
 type Writer struct {
-	pool       *pgxpool.Pool
-	tableName  string
-	writeMode  core.WriteMode
-	primaryKey []string
-	logger     *slog.Logger
+	pool      *pgxpool.Pool
+	tableName sourcecommon.TableName
+	writeMode core.WriteMode
+	logger    *slog.Logger
 }
 
-func NewWriter(pool *pgxpool.Pool, tableName string, writeMode core.WriteMode, logger *slog.Logger) *Writer {
+func NewWriter(pool *pgxpool.Pool, tableName sourcecommon.TableName, writeMode core.WriteMode, logger *slog.Logger) *Writer {
 	return &Writer{
 		pool:      pool,
 		tableName: tableName,
@@ -41,7 +40,10 @@ func NewWriter(pool *pgxpool.Pool, tableName string, writeMode core.WriteMode, l
 }
 
 func (w *Writer) Write(ctx context.Context, table *sourcecommon.Table, ch <-chan sourcemongo.Row) (*WriteResult, error) {
-	cols := resolvedColumns(table, w.tableName)
+	cols := resolvedColumns(table, w.tableName.SourceTableName)
+
+	fmt.Println("cols:", cols)
+	fmt.Println("ch:", <-ch)
 
 	switch w.writeMode {
 	case core.WriteModeOverwrite:
@@ -63,7 +65,7 @@ func (w *Writer) writeAppend(ctx context.Context, cols []string, ch <-chan sourc
 			break
 		}
 
-		n, err := w.copyBatch(ctx, pgx.Identifier{w.tableName}, cols, batch)
+		n, err := w.copyBatch(ctx, pgx.Identifier{w.tableName.DestinationTableName}, cols, batch)
 		result.RowsCopied += n
 		result.Batches++
 
@@ -93,7 +95,7 @@ func (w *Writer) writeOverwrite(ctx context.Context, cols []string, ch <-chan so
 	}
 	defer conn.Release()
 
-	_, err = conn.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s RESTART IDENTITY CASCADE", postgres.QualifiedTable(w.tableName)))
+	_, err = conn.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s RESTART IDENTITY CASCADE", postgres.QualifiedTable(w.tableName.DestinationTableName)))
 	if err != nil {
 		return nil, fmt.Errorf("truncate: %w", err)
 	}
@@ -104,10 +106,6 @@ func (w *Writer) writeOverwrite(ctx context.Context, cols []string, ch <-chan so
 }
 
 func (w *Writer) writeUpsert(ctx context.Context, cols []string, ch <-chan sourcemongo.Row) (*WriteResult, error) {
-	if len(w.primaryKey) == 0 {
-		return nil, fmt.Errorf("upsert mode requires PrimaryKey to be set")
-	}
-
 	start := time.Now()
 	result := &WriteResult{}
 
@@ -117,9 +115,9 @@ func (w *Writer) writeUpsert(ctx context.Context, cols []string, ch <-chan sourc
 	}
 	defer conn.Release()
 
-	tmpName := postgres.TempTable(w.tableName)
+	tmpName := postgres.TempTable(w.tableName.DestinationTableName)
 	tmp := postgres.QualifiedTable(tmpName)
-	target := postgres.QualifiedTable(w.tableName)
+	target := postgres.QualifiedTable(w.tableName.DestinationTableName)
 
 	tx, err := conn.Begin(ctx)
 	if err != nil {
@@ -172,20 +170,21 @@ func (w *Writer) writeUpsert(ctx context.Context, cols []string, ch <-chan sourc
 }
 
 func (w *Writer) buildMergeSQL(tmpTable, targetTable string, cols []string) string {
+	primaryKeys := []string{"id"}
 	quotedCols := make([]string, len(cols))
 	for i, c := range cols {
 		quotedCols[i] = pgx.Identifier{c}.Sanitize()
 	}
 	colList := strings.Join(quotedCols, ", ")
 
-	pkCols := make([]string, len(w.primaryKey))
-	for i, pk := range w.primaryKey {
+	pkCols := make([]string, len(primaryKeys))
+	for i, pk := range primaryKeys {
 		pkCols[i] = pgx.Identifier{pk}.Sanitize()
 	}
 	conflictTarget := strings.Join(pkCols, ", ")
 
-	pkSet := make(map[string]bool, len(w.primaryKey))
-	for _, pk := range w.primaryKey {
+	pkSet := make(map[string]bool, len(primaryKeys))
+	for _, pk := range primaryKeys {
 		pkSet[pk] = true
 	}
 	var setClauses []string

@@ -184,6 +184,7 @@ func buildSources() []sourcecommon.DatabaseScheme {
 	table := &sourcecommon.Table{
 		Name:             core.MongoTableName,
 		WriteMode:        core.WriteModeUpsert,
+		Database:         core.MongoDatabaseName,
 		CreatedTimeField: "date",
 		UpdatedTimeField: "updated_at",
 		DeletedTimeField: "deleted_at",

@@ -15,13 +15,18 @@ type Field struct {
 	IsChildTable    bool
 }
 
+type TableName struct {
+	SourceTableName      string
+	DestinationTableName string
+}
+
 type Table struct {
 	Name             string
 	Database         string
 	WriteMode        core.WriteMode
 	Fields           []Field
 	FieldMap         map[string]Field
-	Tables           []string
+	Tables           []TableName
 	CreatedTimeField string
 	UpdatedTimeField string
 	DeletedTimeField string
@@ -53,7 +58,7 @@ func (s *Table) FillTableNames() {
 
 	// seen is to take all unique table names
 	seen := make(map[string]bool)
-	s.Tables = []string{}
+	s.Tables = []TableName{}
 
 	// add table names to field's object
 	for i, f := range s.Fields {
@@ -73,7 +78,10 @@ func (s *Table) FillTableNames() {
 		// if tha table did not added to table list, just add it
 		if s.Fields[i].TableName != "" && !seen[s.Fields[i].TableName] {
 			seen[s.Fields[i].TableName] = true
-			s.Tables = append(s.Tables, s.Fields[i].TableName)
+			s.Tables = append(s.Tables, TableName{
+				SourceTableName:      s.Fields[i].TableName,
+				DestinationTableName: createDestinationTableName(s.Database, s.Name, s.Fields[i].TableName),
+			})
 		}
 	}
 
@@ -81,14 +89,14 @@ func (s *Table) FillTableNames() {
 	parentName := s.Name
 	fkColName := parentName + "_id"
 	for _, tableName := range s.Tables {
-		if tableName == parentName {
+		if tableName.SourceTableName == parentName {
 			continue
 		}
 		s.Fields = append(s.Fields, Field{
 			Name:            fkColName,
 			SourceType:      core.BSONTypeString,
 			DestinationType: "VARCHAR",
-			TableName:       tableName,
+			TableName:       tableName.SourceTableName,
 		})
 	}
 }
@@ -100,7 +108,7 @@ func (s *Table) FilterFields(table *Table) {
 		WriteMode:        table.WriteMode,
 		Fields:           []Field{},
 		FieldMap:         map[string]Field{},
-		Tables:           []string{},
+		Tables:           []TableName{},
 		CreatedTimeField: table.CreatedTimeField,
 		UpdatedTimeField: table.UpdatedTimeField,
 		DeletedTimeField: table.DeletedTimeField,
@@ -118,4 +126,11 @@ func (s *Table) FilterFields(table *Table) {
 	}
 
 	*s = *out
+}
+
+func createDestinationTableName(databaseName, parentTableName, tableName string) string {
+	if parentTableName == tableName {
+		return databaseName + "_" + tableName
+	}
+	return databaseName + "_" + parentTableName + "_" + tableName
 }
